@@ -1,0 +1,6 @@
+<appwizard><introduction><name></name><author>yzkk</author><icon></icon><homepage></homepage><description><![CDATA[微信公众平台]]></description></introduction><platform><services><service></service></services><appconfig><tpl><![CDATA[
+name: <<appname>>
+version: <<version>>
+version: 1
+...
+]]></tpl></appconfig></platform><code><initScript>index.php</initScript></code></appwizard>
