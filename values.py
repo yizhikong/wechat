@@ -12,6 +12,20 @@ res = '<xml><ToUserName><![CDATA[%s]]></ToUserName>' +\
 '<Content><![CDATA[%s]]></Content>' +\
 '<FuncFlag>0</FuncFlag></xml>'
 
+linkRes = '<xml><ToUserName><![CDATA[%s]]></ToUserName>' +\
+'<FromUserName><![CDATA[%s]]></FromUserName>' +\
+'<CreateTime>%s</CreateTime>' +\
+'<MsgType><![CDATA[news]]></MsgType>' +\
+'<ArticleCount>1</ArticleCount>' +\
+'<Articles><item>' +\
+'<Title><![CDATA[%s]]></Title>' +\
+'<Description><![CDATA[%s]]></Description>' +\
+'<PicUrl><![CDATA[%s]]></PicUrl>' +\
+'<Url><![CDATA[%s]]></Url>' +\
+'</item></Articles></xml>'
+
+imgRoot = 'http://139.129.131.50/img/'
+
 welcome = u"欢迎关注yzkk\'s cat o>_<o！~\n本订阅号的主要功能为翻译（也是默认功能），\n另还会分享一些有趣的东西哦\n回复#help可以获取全部功能"
 jump = '<xml><ToUserName><![CDATA[%s]]></ToUserName>' +\
 '<FromUserName><![CDATA[%s]]></FromUserName>' +\

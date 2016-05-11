@@ -3,11 +3,18 @@ import time
 import urllib
 import urllib2
 import sys
-import dbHandler
+#import dbHandler
 import json
 import hashlib
 from xml.etree import ElementTree
 from values import *
+import redis
+import ImgProcess
+import cv2
+import re
+
+# has key "username_originImgName", "username_status" and "username_setting"
+redis_client = redis.StrictRedis(host = 'localhost', port = 6379, db = 0)
 
 def xmlParse(data):
     req = ElementTree.fromstring(data)
@@ -17,17 +24,20 @@ def xmlParse(data):
     xml['MsgType'] = req.find('MsgType').text
     if xml['MsgType'] == "event":
         return dueEvent(xml, req)
-    else:
+    elif xml['MsgType'] == "text":
         return dueText(xml, req)
+    else:
+        return dueImage(xml, req)
     
 def dueEvent(xml, req):
     Event = req.find('Event').text
     if Event == "subscribe":
         response = res % (xml['FromUserName'], xml['ToUserName'], str(int(time.time())), welcome)
-        dbHandler.createTable(encode(xml['FromUserName']))
+        #dbHandler.createTable(encode(xml['FromUserName']))
         return response
     elif Event == "unsubscribe":
-        dbHandler.dropTable(encode(xml['FromUserName']))
+        #dbHandler.dropTable(encode(xml['FromUserName']))
+        pass
     elif Event == "CLICK":
         key = req.find('EventKey').text
         if key == keyOfTucao:
@@ -39,28 +49,87 @@ def dueEvent(xml, req):
         return response
 
 def dueText(xml, req):
+    print 'due Text'
+    createTime = str(int(time.time()))
     try:
         Content = req.find('Content').text
-		# this response is related to database. So I list it here.
-        if Content == "list words" or Content == "#list words":
-            Content = "\n".join(dbHandler.listWords(encode(xml['FromUserName'])))
-        elif Content is None:
-            Content = "no word"
-        else:
-			# some special response
-            if Content in dic:
-                response = res % (xml['FromUserName'], xml['ToUserName'], str(int(time.time())), dic[Content])
-                return response
-            # url jump response, to show the article
-            if Content in jdic:
-                response = jump % (xml['FromUserName'], xml['ToUserName'], str(int(time.time())), tdic[Content], '', '', jdic[Content])
-                return response
-            # translation part 
-            Content = translation(Content, xml['FromUserName'])
+        # ============================ image process ============================
+        if "setting" in Content:
+            pat = re.compile("\d+")
+            height, width = pat.findall(Content)
+            redis_client.set(xml["FromUserName"] + "_setting", height + "_" + width)
+            return res % (xml['FromUserName'], xml['ToUserName'], str(int(time.time())), 'Change setting success!')
+
+        if redis_client.get(xml["FromUserName"] + "_status") == "selecting":
+            # get select numbers
+            pat = re.compile("\d+")
+            select = map(lambda x : int(x), pat.findall(Content))
+            # get original image name in redis and process
+            redis_key = xml["FromUserName"] + "_originImgName"
+            originImgName = redis_client.get(redis_key)
+            height, width = 2, 3
+            if redis_client.exists(xml["FromUserName"] + "_setting"):
+                setting = redis_client.get(xml["FromUserName"] + "_setting")
+                height = int(setting.split('_')[0])
+                width = int(setting.split('_')[1])
+            img = cv2.imread("static/" + originImgName)
+            for s in select:
+                img = ImgProcess.process(img, s, width, height)
+            # save result
+            resultImgName = xml["FromUserName"] + createTime + '_result.jpg'
+            cv2.imwrite('static/' + resultImgName, img)
+            # return
+            url = imgRoot + resultImgName
+            redis_client.set(xml["FromUserName"] + "_status", "")
+            return linkRes % (xml['FromUserName'], xml['ToUserName'], createTime, 'Result', 'Thanks!', url, url)
+
+        # ============================ special process ============================
+		# some special response
+        if Content in dic:
+            return res % (xml['FromUserName'], xml['ToUserName'], str(int(time.time())), dic[Content])
+        # url jump response, to show the article
+        if Content in jdic:
+            return jump % (xml['FromUserName'], xml['ToUserName'], str(int(time.time())), tdic[Content], '', '', jdic[Content])
+
+        # ============================ translation process ============================
+        Content = translation(Content, xml['FromUserName'])
     except:
         Content = "Exception!"
     response = res % (xml['FromUserName'], xml['ToUserName'], str(int(time.time())), Content)
     return response
+
+def dueImage(xml, req):
+    createTime = str(int(time.time()))
+    try:
+        # get user's photo url
+        PicUrl = req.find('PicUrl').text
+        img = urllib2.urlopen(PicUrl).read()
+        # set user's original photo name in redis
+        originImgName = xml["FromUserName"] + "_" + createTime + "_temp.jpg"
+        redis_key = xml["FromUserName"] + "_originImgName"
+        redis_client.set(redis_key, originImgName)
+        # save user's photo in ali cloud with the original image name in redis
+        f = open("static/" + originImgName, "w")
+        f.write(img)
+        f.close()
+        # read the origin photo with opencv and process
+        img = cv2.imread("static/" + originImgName)
+        height, width = 2, 3
+        if redis_client.exists(xml["FromUserName"] + "_setting"):
+            setting = redis_client.get(xml["FromUserName"] + "_setting")
+            height = int(setting.split('_')[0])
+            width = int(setting.split('_')[1])
+        cropimg = ImgProcess.getBlockImg(img, width, height)
+        # save the block image in ali cloud and set the redis
+        blockImgName = xml["FromUserName"] + "_" + createTime + "_block.jpg"
+        cv2.imwrite('static/' + blockImgName, cropimg)
+        redis_client.set(xml["FromUserName"] + "_status", "selecting")
+        # create image url and return
+        url = imgRoot + blockImgName
+        response = linkRes % (xml['FromUserName'], xml['ToUserName'], createTime, 'Please reply numbers to process', 'for example: 0,3', url, url)
+        return response
+    except:
+        return res % (xml['FromUserName'], xml['ToUserName'], str(int(time.time())), 'Fail')
 
 # translate(English, Janpanse and so on -> Chinese, Chinese -> English), use youdao API
 def translation(Content, FromUserName):
@@ -69,7 +138,8 @@ def translation(Content, FromUserName):
         req = req.encode('UTF-8')
         req = urllib2.quote(req)
     else:
-        dbHandler.insertWord(encode(FromUserName), Content)
+        #dbHandler.insertWord(encode(FromUserName), Content)
+        pass
     word = ''
     url = translationAPI + req
     text = urllib2.urlopen(url).read()
